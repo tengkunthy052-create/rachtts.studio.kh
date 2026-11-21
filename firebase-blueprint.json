@@ -1,0 +1,176 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "User Profile & Studio Quota",
+      "description": "Stores a signed-in user's non-PII TTS studio preferences and daily article quota counter.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the user",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "User display name",
+          "maxLength": 120
+        },
+        "photoURL": {
+          "type": "string",
+          "description": "Optional avatar URL",
+          "maxLength": 500
+        },
+        "dailyDate": {
+          "type": "string",
+          "description": "Current UTC date string YYYY-MM-DD for daily quota tracking",
+          "maxLength": 10,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "dailyCount": {
+          "type": "number",
+          "description": "Number of TTS generations completed on dailyDate"
+        },
+        "preferredVoice": {
+          "type": "string",
+          "description": "Last selected TTS voice ID",
+          "maxLength": 40
+        },
+        "preferredStyle": {
+          "type": "string",
+          "description": "Last selected speech style",
+          "enum": ["natural", "marketing", "podcast", "analyst", "news", "story", "cheerful", "calm", "formal"]
+        },
+        "preferredLanguage": {
+          "type": "string",
+          "description": "Last selected speech language",
+          "enum": ["km", "en", "auto"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server last update timestamp"
+        }
+      },
+      "required": ["uid", "displayName", "dailyDate", "dailyCount", "createdAt", "updatedAt"]
+    },
+    "UserPrivateInfo": {
+      "title": "User Private PII Info",
+      "description": "Isolated PII storage for the user's verified email address.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the owner",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Verified email address of the user",
+          "maxLength": 254
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server last update timestamp"
+        }
+      },
+      "required": ["uid", "email", "createdAt", "updatedAt"]
+    },
+    "SpeechRecord": {
+      "title": "Saved Speech Script & Metadata",
+      "description": "Stores a user's synthesized TTS text script and voice/style metadata for cross-device history and quick re-synthesis.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique document ID matching speechId path",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "description": "Owner Firebase Auth UID",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "description": "Short title or filename label for the speech",
+          "maxLength": 160
+        },
+        "text": {
+          "type": "string",
+          "description": "Speech script text (up to 50,000 characters)",
+          "minLength": 1,
+          "maxLength": 50000
+        },
+        "voice": {
+          "type": "string",
+          "description": "Voice character display name or ID",
+          "maxLength": 100
+        },
+        "gender": {
+          "type": "string",
+          "description": "Voice gender category",
+          "enum": ["female", "male"]
+        },
+        "style": {
+          "type": "string",
+          "description": "Speech synthesis style",
+          "enum": ["natural", "marketing", "podcast", "analyst", "news", "story", "cheerful", "calm", "formal"]
+        },
+        "language": {
+          "type": "string",
+          "description": "Speech language setting",
+          "enum": ["km", "en", "auto"]
+        },
+        "durationSeconds": {
+          "type": "number",
+          "description": "Audio duration in seconds"
+        },
+        "isDialogue": {
+          "type": "boolean",
+          "description": "Whether the script is a dual-speaker dialogue"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp"
+        }
+      },
+      "required": ["id", "userId", "title", "text", "voice", "gender", "style", "language", "durationSeconds", "isDialogue", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Stores each signed-in user's non-PII studio profile, daily quota, and preferred voice settings."
+    },
+    "/users/{userId}/private/{docId}": {
+      "schema": { "$ref": "#/entities/UserPrivateInfo" },
+      "description": "Stores isolated PII (email) strictly readable and writable only by the verified owner."
+    },
+    "/users/{userId}/speeches/{speechId}": {
+      "schema": { "$ref": "#/entities/SpeechRecord" },
+      "description": "Stores a user's saved TTS script history and voice metadata."
+    }
+  }
+}

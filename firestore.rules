@@ -1,0 +1,253 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global safety net: deny everything by default
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Global Hardened Primitives ---
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isVerifiedUser() && request.auth.uid == userId;
+    }
+
+    function isValidGender(g) {
+      return g in ['female', 'male'];
+    }
+
+    function isValidStyle(s) {
+      return s in ['natural', 'marketing', 'podcast', 'analyst', 'news', 'story', 'cheerful', 'calm', 'formal'];
+    }
+
+    function isValidLanguage(l) {
+      return l in ['km', 'en', 'auto'];
+    }
+
+    // --- Validation Blueprints ---
+    function isValidUserProfile(data, userId) {
+      return data.keys().hasAll(['uid', 'displayName', 'dailyDate', 'dailyCount', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly([
+          'uid',
+          'displayName',
+          'photoURL',
+          'dailyDate',
+          'dailyCount',
+          'preferredVoice',
+          'preferredStyle',
+          'preferredLanguage',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.uid is string
+        && isValidId(data.uid)
+        && data.uid == userId
+        && data.uid == request.auth.uid
+        && data.displayName is string
+        && data.displayName.size() <= 120
+        && (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 500))
+        && data.dailyDate is string
+        && data.dailyDate.size() == 10
+        && data.dailyDate.matches('^\\d{4}-\\d{2}-\\d{2}$')
+        && data.dailyCount is number
+        && data.dailyCount >= 0
+        && data.dailyCount <= 1000
+        && (!('preferredVoice' in data) || (data.preferredVoice is string && data.preferredVoice.size() <= 40))
+        && (!('preferredStyle' in data) || isValidStyle(data.preferredStyle))
+        && (!('preferredLanguage' in data) || isValidLanguage(data.preferredLanguage))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidUserPrivateInfo(data, userId) {
+      return data.keys().hasAll(['uid', 'email', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'email', 'createdAt', 'updatedAt'])
+        && data.uid is string
+        && isValidId(data.uid)
+        && data.uid == userId
+        && data.uid == request.auth.uid
+        && data.email is string
+        && data.email.size() >= 3
+        && data.email.size() <= 254
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidSpeechRecord(data, userId, speechId) {
+      return data.keys().hasAll([
+          'id',
+          'userId',
+          'title',
+          'text',
+          'voice',
+          'gender',
+          'style',
+          'language',
+          'durationSeconds',
+          'isDialogue',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id',
+          'userId',
+          'title',
+          'text',
+          'voice',
+          'gender',
+          'style',
+          'language',
+          'durationSeconds',
+          'isDialogue',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.id is string
+        && isValidId(data.id)
+        && data.id == speechId
+        && data.userId is string
+        && isValidId(data.userId)
+        && data.userId == userId
+        && data.userId == request.auth.uid
+        && data.title is string
+        && data.title.size() <= 160
+        && data.text is string
+        && data.text.size() >= 1
+        && data.text.size() <= 50000
+        && data.voice is string
+        && data.voice.size() >= 1
+        && data.voice.size() <= 100
+        && isValidGender(data.gender)
+        && isValidStyle(data.style)
+        && isValidLanguage(data.language)
+        && data.durationSeconds is number
+        && data.durationSeconds >= 0
+        && data.durationSeconds <= 86400
+        && data.isDialogue is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // --- Collection Rules ---
+
+    // User profile & daily quota (non-PII)
+    match /users/{userId} {
+      allow get: if isValidId(userId) && isOwner(userId);
+      allow list: if false;
+
+      allow create: if isValidId(userId)
+        && isOwner(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isValidId(userId)
+        && isOwner(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          // Action 1: Update daily quota or preferences
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'dailyDate',
+            'dailyCount',
+            'preferredVoice',
+            'preferredStyle',
+            'preferredLanguage',
+            'updatedAt'
+          ])
+          ||
+          // Action 2: Refresh profile metadata on login
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'displayName',
+            'photoURL',
+            'updatedAt'
+          ])
+        );
+
+      allow delete: if isValidId(userId) && isOwner(userId);
+
+      // Isolated PII subcollection (email)
+      match /private/{docId} {
+        allow get: if isValidId(userId) && docId == 'info' && isOwner(userId);
+        allow list: if false;
+
+        allow create: if isValidId(userId)
+          && docId == 'info'
+          && isOwner(userId)
+          && isValidUserPrivateInfo(incoming(), userId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && existsAfter(/databases/$(database)/documents/users/$(userId));
+
+        allow update: if isValidId(userId)
+          && docId == 'info'
+          && isOwner(userId)
+          && isValidUserPrivateInfo(incoming(), userId)
+          && incoming().uid == existing().uid
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['email', 'updatedAt']);
+
+        allow delete: if isValidId(userId) && docId == 'info' && isOwner(userId);
+      }
+
+      // User's saved TTS speech scripts & history metadata
+      match /speeches/{speechId} {
+        allow get: if isValidId(userId)
+          && isValidId(speechId)
+          && isOwner(userId)
+          && resource.data.userId == request.auth.uid;
+
+        allow list: if isValidId(userId)
+          && isOwner(userId);
+
+        allow create: if isValidId(userId)
+          && isValidId(speechId)
+          && isOwner(userId)
+          && isValidSpeechRecord(incoming(), userId, speechId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && existsAfter(/databases/$(database)/documents/users/$(userId));
+
+        allow update: if isValidId(userId)
+          && isValidId(speechId)
+          && isOwner(userId)
+          && existing().userId == request.auth.uid
+          && isValidSpeechRecord(incoming(), userId, speechId)
+          && incoming().id == existing().id
+          && incoming().userId == existing().userId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['title', 'text', 'updatedAt']);
+
+        allow delete: if isValidId(userId)
+          && isValidId(speechId)
+          && isOwner(userId)
+          && resource.data.userId == request.auth.uid;
+      }
+    }
+  }
+}
